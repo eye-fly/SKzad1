@@ -134,8 +134,8 @@ int main(int argc, char* argv[]) {
 
         size_t bytes_read = fread(buffer + sizeof(first_byte_num) + sizeof(session_id), 1, pSize, stdin);
         if (bytes_read != pSize) {
-            fprintf(stderr, "Error: first_byte_num=%lu could not read pSize=%u bytes from stdin.\n", first_byte_num, pSize);
-            first_byte_num -= pSize;
+            fprintf(stderr, "Error: first_byte_num=%lu could not read pSize=%u bytes from stdin. Last %ld won't be sent \n", first_byte_num, pSize, bytes_read);
+            break;
         } else{
             uint64_to_uint8(session_id, buffer);
             uint64_to_uint8(first_byte_num, buffer+sizeof(session_id));
