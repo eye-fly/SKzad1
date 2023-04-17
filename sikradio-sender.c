@@ -89,9 +89,9 @@ struct sockaddr_in get_send_address(char* host, uint16_t port) {
     return send_address;
 }
 
-void uint64_to_uint8(uint64_t value, uint8_t *bytes) {
-    for(int i=0;8>i;i++){
-        bytes[7-i] = value & 0xff;
+void uint64_to_uint8(uint64_t value, uint8_t* bytes) {
+    for (int i = 0;8 > i;i++) {
+        bytes[7 - i] = value & 0xff;
         value = value >> 8;
     }
 }
@@ -136,23 +136,27 @@ int main(int argc, char* argv[]) {
         if (bytes_read != pSize) {
             fprintf(stderr, "Error: first_byte_num=%lu could not read pSize=%u bytes from stdin. Last %ld won't be sent \n", first_byte_num, pSize, bytes_read);
             break;
-        } else{
+        }
+        else {
             uint64_to_uint8(session_id, buffer);
-            uint64_to_uint8(first_byte_num, buffer+sizeof(session_id));
+            uint64_to_uint8(first_byte_num, buffer + sizeof(session_id));
+            send_message(socket_fd, &send_address, buffer, sizeof(buffer));
+
+            // printf("sent to %s:%u: \n", client_ip, client_port);
+            // printf("session_id of size %lu = ", sizeof(session_id));
+            // print_bytes(buffer, sizeof(session_id));
+
+            // printf("first_byte_num of size %lu = ", sizeof(first_byte_num));
+            // print_bytes(&buffer[sizeof(session_id)], sizeof(first_byte_num));
+
+            // printf("audio_data of size %u = ", pSize);
+            // print_bytes(&buffer[sizeof(session_id) + sizeof(first_byte_num)], pSize);
         }
         first_byte_num += pSize;
 
-        send_message(socket_fd, &send_address, buffer, sizeof(buffer));
 
-        printf("sent to %s:%u: \n", client_ip, client_port);
-        printf("session_id of size %lu = ", sizeof(session_id));
-        print_bytes(buffer, sizeof(session_id));
 
-        printf("first_byte_num of size %lu = ", sizeof(first_byte_num));
-        print_bytes(&buffer[sizeof(session_id)], sizeof(first_byte_num));
 
-        printf("audio_data of size %u = ",pSize);
-        print_bytes(&buffer[sizeof(session_id)+ sizeof(first_byte_num)], pSize);
     }
 
     CHECK_ERRNO(close(socket_fd));

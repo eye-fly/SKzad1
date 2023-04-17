@@ -1,0 +1,13 @@
+sox -S "Spitfire.mp3" -r 44100 -b 16 -e signed-integer -c 2 -t raw - | pv -q -L 176400 | play -t raw -c 2 -r 44100 -b 16 -e signed-integer --buffer 32768 -
+sox -S "Spitfire.mp3" -r 44100 -b 16 -e signed-integer -c 2 -t raw - | pv -q -L 176400 | play -t raw -c 2 -r 44100 -b 16 -e signed-integer --buffer 38768 -
+sox -S "Spitfire.mp3" -r 44100 -b 16 -e signed-integer -c 2 -t raw - | pv -q -L 180400 | play -t raw -c 2 -r 44100 -b 16 -e signed-integer --buffer 32768 -
+
+
+sox -S "Spitfire.mp3" -r 44100 -b 16 -e signed-integer -c 2 -t raw - | pv -q -L 176400 | ./sikradio-sender -a 10.0.0.160  -n "Radio Muzyczka"
+./sikradio-receiver | play -t raw -c 2 -r 44100 -b 16 -e signed-integer --buffer 32768 -
+
+
+sox -S "Spitfire.mp3" --rate 11100 -b 16 -e signed-integer -c 2 -t raw - | pv -q -L 44400 | play -t raw -c 2 -r 11100 -b 16 -e signed-integer --buffer 32768 -
+
+sox -S "Spitfire.mp3" --rate 11100 -b 16 -e signed-integer -c 2 -t raw - | pv -q -L 44400 | ./sikradio-sender -a 10.0.0.160  -n "Radio Muzyczka"
+./sikradio-receiver | play -t raw -c 2 -r 11100 -b 16 -e signed-integer --buffer 32768 -
