@@ -7,5 +7,6 @@ set(CMAKE_C_FLAGS "-g -Wall -Wextra")
 
 add_executable(sikradio-receiver sikradio-receiver.c)
 add_executable(sikradio-sender sikradio-sender.c)
+target_link_libraries(sikradio-receiver pthread)
 
 install(TARGETS DESTINATION .)
