@@ -91,7 +91,7 @@ size_t recive_package(int socket_fd, struct sockaddr_in* client_address, uint8_t
     ssize_t len = recvfrom(socket_fd, buffer, max_length, flags,
         (struct sockaddr*)client_address, &address_length);
     if (len < 0) {
-        PRINT_ERRNO(); // TODO: restart conection
+        PRINT_ERRNO(); // TODO: restart conection or just return len 0
     }
     return (size_t)len;
 }
@@ -117,7 +117,12 @@ void* reader_function(void* arg) {
     while (1) {
         do {
             pthread_mutex_lock(&mutex);
-            if (buf.b_nr[*buf.curent % buffer_segments] == -1) {
+            if (buf.is_whaiting) {
+                pthread_mutex_unlock(&mutex);
+                sem_wait(&whait_for_buffer_fill);
+                *buf.is_whaiting = false;
+            }
+            else if (buf.b_nr[*buf.curent % buffer_segments] == -1) {
                 *buf.is_whaiting = true;
                 pthread_mutex_unlock(&mutex);
                 sem_wait(&whait_for_buffer_fill);
@@ -131,7 +136,7 @@ void* reader_function(void* arg) {
 
         // fprintf(stderr, "reader: crr_nr = %u\n" , *buf.curent);
         // fprintf(stderr, "dest size = %lu, src size = %lu", sizeof output_buffer,sizeof buf.b[*buf.curent % buffer_segments] );
-        memcpy(output_buffer, &buf.b[(*buf.curent % buffer_segments)*pSize], pSize); //  &buf.b[*buf.curent % buffer_segments] not ideal
+        memcpy(output_buffer, &buf.b[(*buf.curent % buffer_segments) * pSize], pSize); //  &buf.b[*buf.curent % buffer_segments] not ideal
         buf.b_nr[*buf.curent % buffer_segments] = -1;
         *buf.curent = *buf.curent + 1;
 
@@ -154,35 +159,34 @@ int main(int argc, char* argv[]) {
     uint64_t first_byte_num;
     uint8_t input_buffer[pSize + sizeof(first_byte_num) + sizeof(session_id)];
 
+    uint64_t crr_session_id = 0;
     uint32_t buffer_segments = bSize / pSize;
     if (buffer_segments < 2) fatal(" there has to be atleast 2 buffer_segments, bSize >= 2*pSize");
     fprintf(stderr, "buffer_segments: %u\n", buffer_segments);
-    uint8_t b_buffer[buffer_segments*pSize];
+    uint8_t b_buffer[buffer_segments * pSize];
     int32_t b_buffer_segment_nr[buffer_segments];
+    for (uint32_t i = 0;buffer_segments > i;i++) b_buffer_segment_nr[i] = -1;
     uint32_t last_compleated_segment_nr = -1;
     uint32_t max_segment_nr = 0;
     uint32_t current_segment_nr;
     uint32_t currently_read_segment_index = 0;
-    bool is_reader_whating = false;
-    for (uint32_t i = 0;buffer_segments > i;i++) b_buffer_segment_nr[i] = -1;
+    bool is_reader_whaiting = false;
 
     struct reader_args* args = malloc(sizeof(struct reader_args));
-    if (args == NULL)
-    {
-        fatal("malloc");
-    }
+    if (args == NULL) fatal("malloc");
+
     args->b = b_buffer;
     args->b_nr = b_buffer_segment_nr;
     args->curent = &currently_read_segment_index;
     args->max_nr = &max_segment_nr;
-    args->is_whaiting = &is_reader_whating;
+    args->is_whaiting = &is_reader_whaiting;
     pthread_t reader_thread;
-    pthread_create(&reader_thread, NULL, reader_function, (void*)args);
+    CHECK(pthread_create(&reader_thread, NULL, reader_function, (void*)args));
 
 
-    fprintf(stderr, "Starting to listen on port %u\n", data_port);
     memset(input_buffer, 0, sizeof(input_buffer));
     int socket_fd = bind_socket(data_port);
+    fprintf(stderr, "Starting to listen on port %u\n", data_port);
 
     struct sockaddr_in client_address;
     size_t read_length;
@@ -195,30 +199,46 @@ int main(int argc, char* argv[]) {
         else {
             u8tou64(input_buffer, &session_id);
             u8tou64(&input_buffer[sizeof(session_id)], &first_byte_num);
+
+            current_segment_nr = first_byte_num / pSize;
+            if (crr_session_id < session_id) {
+                crr_session_id = session_id;
+                pthread_mutex_lock(&mutex);
+
+                is_reader_whaiting = true;
+                currently_read_segment_index = current_segment_nr;
+                last_compleated_segment_nr = current_segment_nr - 1;
+                max_segment_nr = current_segment_nr;
+                for (uint32_t i = 0;buffer_segments > i;i++) b_buffer_segment_nr[i] = -1;
+
+                pthread_mutex_unlock(&mutex);
+            }
             // fprintf(stderr,"session_id = %lu of size %lu \n",session_id, sizeof(session_id));
 
             // fprintf(stderr, "first_byte_num =%lu of size %lu \n ", first_byte_num, sizeof(first_byte_num));
-            current_segment_nr = first_byte_num / pSize;
-            if (current_segment_nr != last_compleated_segment_nr + 1) {
-                for (uint32_t i = last_compleated_segment_nr; i < current_segment_nr; i++) {
-                    if (b_buffer_segment_nr[i % buffer_segments] == -1) {
-                        fprintf(stderr, "MISSING: BEFORE %u EXPECTED %u\n", current_segment_nr, i);
+            if (crr_session_id == session_id) {
+                if (current_segment_nr != last_compleated_segment_nr + 1) {
+                    for (uint32_t i = last_compleated_segment_nr; i < current_segment_nr; i++) {
+                        if (b_buffer_segment_nr[i % buffer_segments] == -1) {
+                            fprintf(stderr, "MISSING: BEFORE %u EXPECTED %u\n", current_segment_nr, i);
+                        }
                     }
                 }
-            }
 
-            pthread_mutex_lock(&mutex);
-            // fprintf(stderr, "writing to %u\n", current_segment_nr);
-            memcpy(&b_buffer[(current_segment_nr % buffer_segments)*pSize], &input_buffer[sizeof(session_id) + sizeof(first_byte_num)], pSize);
-            b_buffer_segment_nr[current_segment_nr % buffer_segments] = current_segment_nr;
-            if (current_segment_nr > max_segment_nr) max_segment_nr = current_segment_nr;
+                pthread_mutex_lock(&mutex);
+                // fprintf(stderr, "writing to %u\n", current_segment_nr);
+                if (b_buffer_segment_nr[current_segment_nr % buffer_segments] != -1) fprintf(stderr, "OVERWRITING: bolck nr %u", b_buffer_segment_nr[current_segment_nr % buffer_segments]);
+                memcpy(&b_buffer[(current_segment_nr % buffer_segments) * pSize], &input_buffer[sizeof(session_id) + sizeof(first_byte_num)], pSize);
+                b_buffer_segment_nr[current_segment_nr % buffer_segments] = current_segment_nr;
+                if (current_segment_nr > max_segment_nr) max_segment_nr = current_segment_nr;
 
-            if (is_reader_whating && max_segment_nr >= currently_read_segment_index + (3 * buffer_segments / 4)) {
-                // fprintf(stderr, "reader start \n");
-                sem_post(&whait_for_buffer_fill);
-            }
-            else {
-                pthread_mutex_unlock(&mutex);
+                if (is_reader_whaiting && max_segment_nr >= currently_read_segment_index + (3 * buffer_segments / 4)) {
+                    // fprintf(stderr, "reader start \n");
+                    sem_post(&whait_for_buffer_fill);
+                }
+                else {
+                    pthread_mutex_unlock(&mutex);
+                }
             }
         }
 
