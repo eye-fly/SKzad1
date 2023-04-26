@@ -106,10 +106,10 @@ void send_message(int socket_fd, const struct sockaddr_in* send_address, uint8_t
     errno = 0;
     ssize_t sent_length = sendto(socket_fd, buffer, buffer_size, send_flags,
         (struct sockaddr*)send_address, address_length);
-    if (sent_length < 0) {
-        PRINT_ERRNO(); // to change
-    }
-    ENSURE(sent_length == buffer_size); // to change
+    // if (sent_length < 0) {
+    //     PRINT_ERRNO(); // to change
+    // }
+    // ENSURE(sent_length == buffer_size); // to change
 }
 
 int main(int argc, char* argv[]) {
@@ -127,9 +127,10 @@ int main(int argc, char* argv[]) {
         PRINT_ERRNO();
     }
 
-    char* client_ip = inet_ntoa(send_address.sin_addr);
-    uint16_t client_port = ntohs(send_address.sin_port);
+    // char* client_ip = inet_ntoa(send_address.sin_addr);
+    // uint16_t client_port = ntohs(send_address.sin_port);
 
+    // int erdf =0;
     while (1) {
 
         size_t bytes_read = fread(buffer + sizeof(first_byte_num) + sizeof(session_id), 1, pSize, stdin);
@@ -140,8 +141,11 @@ int main(int argc, char* argv[]) {
         else {
             uint64_to_uint8(session_id, buffer);
             uint64_to_uint8(first_byte_num, buffer + sizeof(session_id));
+            
+            // erdf ++;
+            // if(erdf% 1000 != 0 ){
             send_message(socket_fd, &send_address, buffer, sizeof(buffer));
-
+            // }
             // printf("sent to %s:%u: \n", client_ip, client_port);
             // printf("session_id of size %lu = ", sizeof(session_id));
             // print_bytes(buffer, sizeof(session_id));

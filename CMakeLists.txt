@@ -1,9 +1,9 @@
 cmake_minimum_required (VERSION 3.1)
 
-project(MIMUW_SIK_UDP_SOCKETS)
+project(MIMUW_SIK_UDP_RADIO)
 
 set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_FLAGS "-g -Wall -Wextra")
+set(CMAKE_C_FLAGS "-g -Wall -Wextra -O2")
 
 add_executable(sikradio-receiver sikradio-receiver.c)
 add_executable(sikradio-sender sikradio-sender.c)
