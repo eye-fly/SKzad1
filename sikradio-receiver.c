@@ -11,6 +11,7 @@
 #include <endian.h>
 
 #include "err.h"
+#include "util.h"
 #include "cb.h"
 
 #define INDEX_NR 438620
@@ -29,10 +30,13 @@ CircularBuffer stderr_buf;
 
 void read_port(char* string) {
     errno = 0;
-    unsigned long port = strtoul(string, NULL, 10);
+    long port=0 ;
+
+    port = read_number(string);
+    printf("po=port: %ld\n", port);
     PRINT_ERRNO();
-    if (port > UINT16_MAX) {
-        fatal("%ul is not a valid port number", port);
+    if (port > UINT16_MAX || port <= 0) {
+        fatal("%u is not a valid port number", port);
     }
 
     data_port = (uint16_t)port;
@@ -51,8 +55,13 @@ bool read_parameters(int argc, char* argv[]) {
         else if (strcmp(argv[i], "-p") == 0) {
             i++;
             if (i < argc) {
-                pSize = strtoul(argv[i], NULL, 10);
-                PRINT_ERRNO();
+                pSize = read_number(argv[i]);
+                if(pSize <= 0){
+                    fatal("pSize <= 0");
+                }
+                if(pSize > 548){
+                    fatal("pSize > 548");
+                }
             }
             else {
                 fatal("-p flag requires a pSize value.\n");
@@ -61,8 +70,10 @@ bool read_parameters(int argc, char* argv[]) {
         else if (strcmp(argv[i], "-b") == 0) {
             i++;
             if (i < argc) {
-                bSize = strtoul(argv[i], NULL, 10);
-                PRINT_ERRNO();
+                bSize = read_number(argv[i]);
+                if(bSize <= 0){
+                    fatal("bSize <= 0");
+                }
             }
             else {
                 fatal("-b flag requires a bSize value.\n");
@@ -97,7 +108,8 @@ size_t recive_package(int socket_fd, struct sockaddr_in* client_address, uint8_t
     ssize_t len = recvfrom(socket_fd, buffer, max_length, flags,
         (struct sockaddr*)client_address, &address_length);
     if (len < 0) {
-        PRINT_ERRNO(); // TODO: restart conection or just return len 0
+        return 0;
+        // PRINT_ERRNO(); // TODO: restart conection or just return len 0
     }
     return (size_t)len;
 }
@@ -106,6 +118,11 @@ void u8tou64(uint8_t* const u8, uint64_t* u64) {
     memcpy(u64, u8, 8);
     *u64 = be64toh(*u64);
 }
+
+struct statio{
+    char* 
+};
+
 
 struct reader_args {
     int32_t* curent;
@@ -271,7 +288,7 @@ int main(int argc, char* argv[]) {
                 if (current_segment_nr > max_segment_nr){
                     max_segment_nr = current_segment_nr;
 
-                    if( max_segment_nr+1 >= buffer_segments && (int32_t)(max_segment_nr - buffer_segments+5) > currently_read_segment_index) currently_read_segment_index = max_segment_nr - buffer_segments+5;
+                    if( max_segment_nr+1 >= buffer_segments && (int32_t)(max_segment_nr - buffer_segments+1) > currently_read_segment_index) currently_read_segment_index = max_segment_nr - buffer_segments+1;
                 }
 
                 if (whaiting_for_payback && (max_segment_nr >= (currently_read_segment_index + (3 * buffer_segments / 4))) ) {
