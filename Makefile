@@ -1,16 +1,20 @@
 CC = g++
 CFLAGS = -Wall -pthread -O2
-SRC = sikradio-receiver.c sikradio-sender.c
-OBJ = $(SRC:.c=.o)
+SRC = sikradio-receiver.cc sikradio-sender.cc
+OBJ = $(SRC:.cc=.o)
 PROGRAMS = sikradio-receiver sikradio-sender         	
 
 all: $(PROGRAMS)
+.PHONY: all 
 
-%: %.o $(SRC)
-	$(CC) $(CFLAGS) $^ -o $@
+# %: %.o $(SRC)
+# 	$(CC) $(CFLAGS) $^ -o $@
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+%: %.cc
+	$(CC) $(CFLAGS) $@.cc -o $@
+
+# %.cc: $(SRC) util.h
+# 	$(CC) $(CFLAGS) $@.cc -o $@
 
 clean:
 	rm -f *.o $(PROGRAMS)

@@ -28,7 +28,7 @@ static const size_t CB_INITIAL_SIZE = 16384;
 
 void cbInit(CircularBuffer* b)
 {
-  b->buf = malloc(CB_INITIAL_SIZE);
+  b->buf = (char *)malloc(CB_INITIAL_SIZE);
   if (!b->buf)
     fatal("Out of memory.");
   b->pos = 0;
@@ -62,7 +62,7 @@ void cbPushBack(CircularBuffer* b, char const* data, size_t n)
     void* newBuf = reallocarray(b->buf, cm, b->capacity);
     if (!newBuf)
       fatal("Out of memory.");
-    b->buf = newBuf;
+    b->buf = (char *)newBuf;
     b->capacity = cm * oldCapacity;
 
     if (b->pos + b->size > oldCapacity)

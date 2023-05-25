@@ -28,21 +28,6 @@ uint32_t fSize = 65536 * 2;
 uint32_t rTime = 259;
 std::string sationName = "Nienazwany Nadajnik";
 
-
-uint16_t read_port(char* string) {
-    errno = 0;
-    long port = 0;
-
-    port = read_number(string);
-    printf("po=port: %ld\n", port);
-    PRINT_ERRNO();
-    if (port > UINT16_MAX || port <= 0) {
-        return 0;
-    }
-
-    return port;
-}
-
 bool read_parameters(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-a") == 0) {
@@ -58,7 +43,7 @@ bool read_parameters(int argc, char* argv[]) {
             i++;
             if (i < argc) {
                 data_port = read_port(argv[i]);
-                if (data_port) {
+                if (data_port <= 0) {
                     fatal("%s is not a valid port number", argv[i]);
                 }
             }
@@ -70,7 +55,7 @@ bool read_parameters(int argc, char* argv[]) {
             i++;
             if (i < argc) {
                 ctrl_port = read_port(argv[i]);
-                if (ctrl_port) {
+                if (ctrl_port <= 0) {
                     fatal("%s is not a valid port number", argv[i]);
                 }
             }
@@ -152,62 +137,11 @@ bool read_parameters(int argc, char* argv[]) {
     return false;
 }
 
-struct sockaddr_in get_send_address(char* host, uint16_t port) {
-    struct addrinfo hints;
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_INET; // IPv4
-    hints.ai_socktype = SOCK_DGRAM;
-    hints.ai_protocol = IPPROTO_UDP;
-
-    struct addrinfo* address_result;
-    CHECK(getaddrinfo(host, NULL, &hints, &address_result));
-
-    struct sockaddr_in send_address;
-    send_address.sin_family = AF_INET; // IPv4
-    send_address.sin_addr.s_addr =
-        ((struct sockaddr_in*)(address_result->ai_addr))->sin_addr.s_addr; // IP address
-    send_address.sin_port = htons(port); // port from the command line
-
-    freeaddrinfo(address_result);
-
-    return send_address;
-}
-
 void uint64_to_uint8(uint64_t value, uint8_t* bytes) {
     for (int i = 0;8 > i;i++) {
         bytes[7 - i] = value & 0xff;
         value = value >> 8;
     }
-}
-
-void send_message(int socket_fd, const struct sockaddr_in* send_address, const uint8_t* buffer, ssize_t buffer_size) {
-    int send_flags = 0;
-    socklen_t address_length = (socklen_t)sizeof(*send_address);
-    errno = 0;
-    ssize_t sent_length = sendto(socket_fd, buffer, buffer_size, send_flags,
-        (struct sockaddr*)send_address, address_length);
-    // if (sent_length < 0) {
-    //     PRINT_ERRNO(); // to change
-    // }
-    std::cout << "send len = " << sent_length << ",   to send =" << buffer_size << "\n";
-    // ENSURE(sent_length == buffer_size); // to change
-}
-
-int bind_socket(uint16_t port) {
-    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0); // creating IPv4 UDP socket
-    ENSURE(socket_fd > 0);
-    // after socket() call; we should close(sock) on any execution path;
-
-    struct sockaddr_in server_address;
-    server_address.sin_family = AF_INET; // IPv4
-    server_address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
-    server_address.sin_port = htons(port);
-
-    // bind the socket to a concrete address
-    CHECK_ERRNO(bind(socket_fd, (struct sockaddr*)&server_address,
-        (socklen_t)sizeof(server_address)));
-
-    return socket_fd;
 }
 
 size_t recive_package(int socket_fd, struct sockaddr_in* client_address, uint8_t* buffer, size_t max_length) {
@@ -221,16 +155,6 @@ size_t recive_package(int socket_fd, struct sockaddr_in* client_address, uint8_t
         // PRINT_ERRNO(); // TODO: restart conection or just return len 0
     }
     return (size_t)len;
-}
-
-std::string uint8ArrayToString(const uint8_t* arr, size_t size) {
-    std::stringstream ss;
-
-    for (size_t i = 0; i < size; ++i) {
-        ss << static_cast<char>(arr[i]);
-    }
-
-    return ss.str();
 }
 
 int fifo_segments;
@@ -249,7 +173,7 @@ bool do_exit = false;
 void* control_function(void* arg) {
 
     /* otwarcie gniazda */
-    int socket_fd = bind_socket(ctrl_port); // TODO change to multicast??
+    int socket_fd = bind_socket(ctrl_port); // TODO change to brodcast??
     // int out_socket_fd = socket(PF_INET, SOCK_DGRAM, 0);
     // if (socket_fd < 0) {
     //     PRINT_ERRNO();
@@ -284,14 +208,14 @@ void* control_function(void* arg) {
             std::stringstream ss;
             ss << "BOREWICZ_HERE " << dest_addr << " " << data_port << " " << sationName << "\n";
             std::string str = ss.str();
-            // std::cout<<str;
+            std::cout<<str;
 
-            // char* client_ip = inet_ntoa(client_address.sin_addr);
-            // uint16_t client_port = ntohs(client_address.sin_port);
-            // std::cout<<"client_ip="<<client_ip<<", port="<<ctrl_port<<"\n";
+            char* client_ip = inet_ntoa(client_address.sin_addr);
+            uint16_t client_port = ntohs(client_address.sin_port);
+            std::cout<<"client_ip="<<client_ip<<", client_port="<<client_port<<"\n";
 
             // struct sockaddr_in send_address = get_send_address(client_ip, ctrl_port);
-            send_message(socket_fd, &client_address, reinterpret_cast<const uint8_t*>(str.c_str()), str.length() + 1);
+            send_message(socket_fd, &client_address, reinterpret_cast<const uint8_t*>(str.c_str()), str.length());
             continue;
         }
 
