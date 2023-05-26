@@ -12,6 +12,7 @@
 #include <string>
 #include <regex>
 #include <set>
+#include <list>
 
 #include "err.h"
 #include "util.h"
@@ -24,6 +25,8 @@ uint16_t data_port = 20000 + (INDEX_NR % 10000);
 uint16_t ctrl_port = 30000 + (INDEX_NR % 10000);
 uint32_t pSize = 512;
 uint32_t bSize = 65536;
+
+uint32_t rTime = 250;
 
 std::string desired_station_name = "";
 
@@ -99,6 +102,7 @@ struct station {
     std::string address;
     uint16_t port;
     std::string name;
+    sockaddr_in direct_address;
 };
 inline bool operator<(const station& lhs, const station& rhs)
 {
@@ -124,10 +128,10 @@ station choosen_station;
 bool is_station_choosen = false;
 
 struct reader_args {
-    int32_t* curent;
-    uint32_t* max_nr;
+    int64_t* curent;
+    int64_t* max_nr;
     uint8_t* b;
-    int32_t* b_nr;
+    int64_t* b_nr;
     bool* is_whaiting;
     bool* stop;
 };
@@ -140,7 +144,10 @@ void* reader_function(void* arg) {
 
     while (1) {
         pthread_mutex_lock(&mutex);
-        if (*buf.stop || buf.b_nr[*buf.curent % buffer_segments] != (int32_t)*buf.curent) {
+        if (*buf.stop || buf.b_nr[*buf.curent % buffer_segments] != (int64_t)*buf.curent) {
+            if (buf.b_nr[*buf.curent % buffer_segments] != (int32_t)*buf.curent) {
+                std::cerr << "stoping on " << *buf.curent << " becouse in buf is:" << buf.b_nr[*buf.curent % buffer_segments] << "\n";
+            }
             // fprintf(stderr, "reader whait 1 on crr_nr = %u\n" , *buf.curent);
             *buf.stop = false;
             *buf.is_whaiting = true;
@@ -150,7 +157,7 @@ void* reader_function(void* arg) {
 
         }
 
-        fprintf(stderr, "reader: crr_nr = %u\n", *buf.curent);
+        // fprintf(stderr, "reader: crr_nr = %u\n", *buf.curent);
         // fprintf(stderr, "dest size = %lu, src size = %lu", sizeof output_buffer,sizeof buf.b[*buf.curent % buffer_segments] );
         memcpy(output_buffer, &buf.b[(*buf.curent % buffer_segments) * pSize], pSize); //  &buf.b[*buf.curent % buffer_segments] not ideal
         buf.b_nr[*buf.curent % buffer_segments] = -1;
@@ -159,7 +166,7 @@ void* reader_function(void* arg) {
         pthread_mutex_unlock(&mutex);
 
         fwrite(output_buffer, sizeof(uint8_t), pSize, stdout);
-        fprintf(stderr, "reader done written: \n");
+        // fprintf(stderr, "reader done written: \n");
     }
 }
 
@@ -180,7 +187,7 @@ void* reply_listiner_function(void* arg) {
 
     while (1) {
 
-        read_length = recive_package(control_socket_fd, NULL, buffer, sizeof(buffer));
+        read_length = recive_package(control_socket_fd, &antelope, buffer, sizeof(buffer));
         if (read_length < 0) {
             // std::cerr << "got read_length = " << read_length << " on control port\n";
             continue;
@@ -193,12 +200,13 @@ void* reply_listiner_function(void* arg) {
             stt.address = matches[1].str();
             stt.port = read_port(matches[2].str().c_str());
             stt.name = matches[3].str();
+            stt.direct_address = antelope;
 
             // std::cerr << "(reply_listiner) got ip = " << "'" << stt.address << "' port=" << stt.port << " station name: '" << stt.name << "'\n";
 
             //check 
             if (inet_aton(stt.address.c_str(), &antelope.sin_addr) != 1) continue;
-            if ((antelope.sin_addr.s_addr & 0xf0) != 0xe0) continue;
+            if ((antelope.sin_addr.s_addr & 0xf0) != 0xe0) continue; //TODO: use macro because 240.999.0.0
 
             if (stt.port <= 0)continue;
 
@@ -235,6 +243,64 @@ void* discovery_function(void* arg) {
     }
 }
 
+uint32_t buffer_segments;
+int64_t max_segment_nr = 0;
+int64_t currently_read_segment_index = 0;
+int64_t* b_buffer_segment_nr;
+int64_t* retransmit_segment_nr;
+long* retransmit_time;
+long do_retransmit_requester() {
+    std::list<int64_t> lst;
+    long now = get_milis();
+    
+    long erliest_request = now + (1000*rTime);
+    for (uint32_t i = currently_read_segment_index + 1; i < max_segment_nr; i++) {
+        if (b_buffer_segment_nr[i % buffer_segments] == -1) {
+            if (retransmit_segment_nr[i % buffer_segments] != i) {
+                retransmit_segment_nr[i % buffer_segments] = i;
+                lst.push_back(i * pSize);
+                retransmit_time[i % buffer_segments] = now + (1000 * rTime);
+                continue;
+            }
+
+            if (retransmit_time[i % buffer_segments] <= now) {
+                lst.push_back(i * pSize);
+                retransmit_time[i % buffer_segments] = now + (1000 * rTime);
+                continue;
+            }
+            erliest_request = std::min(erliest_request, retransmit_time[i % buffer_segments]);
+        }
+    }
+
+    if (!lst.empty()) {
+        std::stringstream ss;
+        ss << "LOUDER_PLEASE ";
+        ss << lst.front();
+        lst.pop_front();
+        for (long x : lst) {
+            ss << "," << x;
+        }
+        ss << "\n";
+        std::string str = ss.str();
+        std::cerr << "(retransmit_requester) " << str;
+
+        send_message(control_socket_fd, &crr_station.direct_address, reinterpret_cast<const uint8_t*>(str.c_str()), str.length());
+    }
+    return erliest_request;
+}
+
+void* retransmit_requester_function(void* arg) {
+    long erliest_request = get_milis();
+    while (1) {
+        while (erliest_request > get_milis())
+        {
+            usleep((erliest_request - get_milis())/1000 );
+        }
+        if (crr_station.port != 0) { // check if is station is online
+            do_retransmit_requester();
+        }
+    }
+}
 
 int main(int argc, char* argv[]) {
     read_parameters(argc, argv);
@@ -248,16 +314,21 @@ int main(int argc, char* argv[]) {
     uint8_t input_buffer[pSize + sizeof(first_byte_num) + sizeof(session_id)];
 
     uint64_t crr_session_id = 0;
-    uint32_t buffer_segments = bSize / pSize;
+    buffer_segments = bSize / pSize;
     if (buffer_segments < 2) fatal(" there has to be atleast 2 buffer_segments, bSize >= 2*pSize");
     fprintf(stderr, "buffer_segments: %u\n", buffer_segments);
     uint8_t b_buffer[buffer_segments * pSize];
-    int32_t b_buffer_segment_nr[buffer_segments];
+    int64_t b1[buffer_segments];
+    b_buffer_segment_nr = b1;
     for (uint32_t i = 0;buffer_segments > i;i++) b_buffer_segment_nr[i] = -1;
+    int64_t b2[buffer_segments];
+    retransmit_segment_nr = b2;
+    for (uint32_t i = 0;buffer_segments > i;i++) retransmit_segment_nr[i] = -1;
+    long b3[buffer_segments];
+    retransmit_time = b3;
+
     // uint32_t last_compleated_segment_nr = -1;
-    uint32_t max_segment_nr = 0;
-    uint32_t current_segment_nr;
-    int32_t currently_read_segment_index = 0;
+    int64_t current_segment_nr;
     bool is_reader_whaiting = false;
     bool reader_stoop = true;
     bool has_reader_been_started = false;
@@ -286,6 +357,8 @@ int main(int argc, char* argv[]) {
     CHECK(pthread_create(&discovery_thread, NULL, discovery_function, NULL));
     pthread_t reply_listiner_thread;
     CHECK(pthread_create(&reply_listiner_thread, NULL, reply_listiner_function, NULL));
+    pthread_t retransmit_requester_thread;
+    CHECK(pthread_create(&retransmit_requester_thread, NULL, retransmit_requester_function, NULL));
 
 
     struct timeval tv; // timeout of 2s
@@ -311,7 +384,7 @@ int main(int argc, char* argv[]) {
 
             //disconect from old
             if (socket_fd != -1) lave_mulitcast_recive_socket(&socket_fd, ip_mreq);
-                
+
             //connent to new
             socket_fd = socket(AF_INET, SOCK_DGRAM, 0); // new udp ip4 socket
             if (socket_fd < 0) {
@@ -320,7 +393,7 @@ int main(int argc, char* argv[]) {
             CHECK_ERRNO(setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv)); //timeout
 
             // multicast group
-            if (inet_aton(crr_station.address.c_str(), &ip_mreq.imr_multiaddr) == 0) { 
+            if (inet_aton(crr_station.address.c_str(), &ip_mreq.imr_multiaddr) == 0) {
                 fatal("inet_aton - invalid multicast address\n");
             }
             CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*)&ip_mreq, sizeof ip_mreq));
@@ -330,7 +403,7 @@ int main(int argc, char* argv[]) {
 
         }
         pthread_mutex_lock(&stations_mutex);
-        if(time(NULL) > stations[crr_station]+ 20){
+        if (time(NULL) > stations[crr_station] + 20) {
             std::cerr << "station inactive for more than 20s\n";
             crr_station.port = 0;
             is_station_choosen = false;
@@ -365,7 +438,7 @@ int main(int argc, char* argv[]) {
             currently_read_segment_index = current_segment_nr;
             max_segment_nr = current_segment_nr;
             for (uint32_t i = 0;buffer_segments > i;i++) b_buffer_segment_nr[i] = -1;
-
+            for (uint32_t i = 0;buffer_segments > i;i++) retransmit_segment_nr[i] = -1;
 
         }
         // fprintf(stderr,"session_id = %lu of size %lu \n",session_id, sizeof(session_id));
@@ -373,23 +446,18 @@ int main(int argc, char* argv[]) {
         // fprintf(stderr, "first_byte_num =%lu of size %lu \n ", first_byte_num, sizeof(first_byte_num));
         if (crr_session_id == session_id) {
 
-            for (uint32_t i = currently_read_segment_index; i < current_segment_nr; i++) {
-                if (b_buffer_segment_nr[i % buffer_segments] == -1) {
-                    fprintf(stderr, "MISSING: BEFORE %u EXPECTED %u\n", current_segment_nr, i);
-                }
+            if (current_segment_nr > max_segment_nr) {
+                max_segment_nr = current_segment_nr;
             }
-
+            do_retransmit_requester();
 
             // fprintf(stderr, "writing to %u\n", current_segment_nr);
             if (b_buffer_segment_nr[current_segment_nr % buffer_segments] != -1)
             {
-                fprintf(stderr, "OVERWRITING: bolck nr %u", b_buffer_segment_nr[current_segment_nr % buffer_segments]);
+                fprintf(stderr, "OVERWRITING: bolck nr %lu", b_buffer_segment_nr[current_segment_nr % buffer_segments]);
             }
             memcpy(&b_buffer[(current_segment_nr % buffer_segments) * pSize], &input_buffer[sizeof(session_id) + sizeof(first_byte_num)], pSize);
             b_buffer_segment_nr[current_segment_nr % buffer_segments] = current_segment_nr;
-            if (current_segment_nr > max_segment_nr) {
-                max_segment_nr = current_segment_nr;
-            }
 
             if (has_reader_been_started && is_reader_whaiting) {
                 //restart play
@@ -418,6 +486,7 @@ int main(int argc, char* argv[]) {
     pthread_join(reader_thread, NULL);
     pthread_join(discovery_thread, NULL);
     pthread_join(reply_listiner_thread, NULL);
+    pthread_join(retransmit_requester_thread, NULL);
 
     pthread_mutex_destroy(&stations_mutex);
     pthread_mutex_destroy(&mutex);

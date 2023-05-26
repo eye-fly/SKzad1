@@ -25,7 +25,7 @@ uint16_t data_port = 20000 + (INDEX_NR % 10000);
 uint16_t ctrl_port = 30000 + (INDEX_NR % 10000);
 uint32_t pSize = 512;
 uint32_t fSize = 65536 * 2;
-uint32_t rTime = 259;
+uint32_t rTime = 250;
 std::string sationName = "Nienazwany Nadajnik";
 
 bool read_parameters(int argc, char* argv[]) {
@@ -272,9 +272,9 @@ void* resender_function(void* arg) {
     std::set<uint64_t>* set;
     long last_resend = get_milis();
     while (!do_exit) {
-        while (last_resend + rTime > get_milis())
+        while (last_resend + (1000 *rTime) > get_milis())
         {
-            usleep(1000 * (last_resend + rTime - get_milis()));
+            usleep((rTime) + (last_resend - get_milis())/1000 );
         }
 
         pthread_mutex_lock(&set_mutex);
