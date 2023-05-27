@@ -208,11 +208,11 @@ void* control_function(void* arg) {
             std::stringstream ss;
             ss << "BOREWICZ_HERE " << dest_addr << " " << data_port << " " << sationName << "\n";
             std::string str = ss.str();
-            std::cout<<str;
+            // std::cout<<str;
 
-            char* client_ip = inet_ntoa(client_address.sin_addr);
-            uint16_t client_port = ntohs(client_address.sin_port);
-            std::cout<<"client_ip="<<client_ip<<", client_port="<<client_port<<"\n";
+            // char* client_ip = inet_ntoa(client_address.sin_addr);
+            // uint16_t client_port = ntohs(client_address.sin_port);
+            // // std::cout<<"client_ip="<<client_ip<<", client_port="<<client_port<<"\n";
 
             // struct sockaddr_in send_address = get_send_address(client_ip, ctrl_port);
             send_message(socket_fd, &client_address, reinterpret_cast<const uint8_t*>(str.c_str()), str.length());
@@ -245,7 +245,7 @@ void* control_function(void* arg) {
                     if (number >= 0) {
                         in_set->insert(number / pSize);
                     }
-                    std::cout << " " << number;
+                    std::cout << " " << number/ pSize;
                 }
                 pthread_mutex_unlock(&set_mutex);
                 std::cout << std::endl;
@@ -272,10 +272,12 @@ void* resender_function(void* arg) {
     std::set<uint64_t>* set;
     long last_resend = get_milis();
     while (!do_exit) {
-        while (last_resend + (1000 *rTime) > get_milis())
+        while (last_resend + rTime > get_milis())
         {
-            usleep((rTime) + (last_resend - get_milis())/1000 );
+            usleep((rTime + last_resend - get_milis())*1000 );
         }
+        last_resend = get_milis();
+        // std::cerr << "(resender) "<< get_milis()<<"\n";
 
         pthread_mutex_lock(&set_mutex);
         out_set->clear();
@@ -291,7 +293,7 @@ void* resender_function(void* arg) {
             pthread_mutex_lock(&fifo_mutex);
             if (x >= fifo_first && x <= fifo_last) {
                 crr_first_byte_num = x * pSize;
-                memcpy(buffer + sizeof(crr_first_byte_num) + sizeof(session_id), &fifo[(fifo_last % fifo_segments) * pSize], pSize);
+                memcpy(buffer + sizeof(crr_first_byte_num) + sizeof(session_id), &fifo[(x % fifo_segments) * pSize], pSize);
                 in_fifo = true;
             }
             pthread_mutex_unlock(&fifo_mutex);
@@ -364,7 +366,9 @@ int main(int argc, char* argv[]) {
 
             // erdf ++;
             // if(erdf% 1000 != 0 ){
-            send_message(mulitcast_socket_fd, &data_send_address, buffer, sizeof(buffer));
+            if((first_byte_num/pSize) %4 == 0){
+                send_message(mulitcast_socket_fd, &data_send_address, buffer, sizeof(buffer));
+            }
             // }
             // printf("sent to %s:%u: \n", client_ip, client_port);
             // printf("session_id of size %lu = ", sizeof(session_id));

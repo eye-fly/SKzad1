@@ -128,6 +128,23 @@ void send_message(int socket_fd, const struct sockaddr_in* send_address, const u
     // ENSURE(sent_length == buffer_size); // to change
 }
 
+inline static size_t receive_message(int socket_fd, void *buffer, size_t max_length, int flags) {
+    errno = 0;
+    ssize_t received_length = recv(socket_fd, buffer, max_length, flags);
+    if (received_length < 0) {
+        return 0;
+    }
+    return (size_t) received_length;
+}
+
+inline static int accept_connection(int socket_fd, struct sockaddr_in *client_address) {
+    socklen_t client_address_length = (socklen_t) sizeof(*client_address);
+
+    int client_fd = accept(socket_fd, (struct sockaddr *) client_address, &client_address_length);
+
+    return client_fd;
+}
+
 long read_number(const char* str) {
     char* endptr;
 

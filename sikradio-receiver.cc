@@ -23,6 +23,7 @@
 std::string discovery_addr = "255.255.255.255";
 uint16_t data_port = 20000 + (INDEX_NR % 10000);
 uint16_t ctrl_port = 30000 + (INDEX_NR % 10000);
+uint16_t ui_port = 10000 + (INDEX_NR % 10000);
 uint32_t pSize = 512;
 uint32_t bSize = 65536;
 
@@ -45,6 +46,30 @@ bool read_parameters(int argc, char* argv[]) {
             }
             else {
                 fatal("-P flag requires a data_port value.\n");
+            }
+        }
+        else if (strcmp(argv[i], "-C") == 0) {
+            i++;
+            if (i < argc) {
+                ctrl_port = read_port(argv[i]);
+                if (ctrl_port <= 0) {
+                    fatal("%s is not a valid port number", argv[i]);
+                }
+            }
+            else {
+                fatal("-C flag requires a ctrl_port value.\n");
+            }
+        }
+        else if (strcmp(argv[i], "-U") == 0) {
+            i++;
+            if (i < argc) {
+                ui_port = read_port(argv[i]);
+                if (ui_port <= 0) {
+                    fatal("%s is not a valid port number", argv[i]);
+                }
+            }
+            else {
+                fatal("-U flag requires a ui_port value.\n");
             }
         }
         else if (strcmp(argv[i], "-p") == 0) {
@@ -72,6 +97,44 @@ bool read_parameters(int argc, char* argv[]) {
             }
             else {
                 fatal("-b flag requires a bSize value.\n");
+            }
+        }
+        else if (strcmp(argv[i], "-R") == 0) {
+            i++;
+            if (i < argc) {
+                rTime = read_number(argv[i]);
+                if (rTime <= 0) {
+                    fatal("rTime <= 0");
+                }
+            }
+            else {
+                fatal("-R flag requires a rTime value.\n");
+            }
+        }
+        else if (strcmp(argv[i], "-n") == 0) {
+            i++;
+            if (i < argc) {
+                desired_station_name = argv[i];
+                if (desired_station_name == "") {
+                    fatal("sationName cannot be empty");
+                }
+                if (desired_station_name.length() > 64) {
+                    fatal("sationName lenght cannot be longer than 64");
+                }
+                if (desired_station_name[0] == ' ') {
+                    fatal("sationName cannot start with space");
+                }
+                if (desired_station_name[desired_station_name.length() - 1] == ' ') {
+                    fatal("sationName cannot end with space");
+                }
+                for (long unsigned int j = 0;desired_station_name.length() > j;j++) {
+                    if (desired_station_name[j] < 32 || desired_station_name[j]>127) {
+                        fatal("sationName can only contain ASCII from 32 to 127");
+                    }
+                }
+            }
+            else {
+                fatal("-n flag requires a name of station.\n");
             }
         }
     }
@@ -252,20 +315,20 @@ long* retransmit_time;
 long do_retransmit_requester() {
     std::list<int64_t> lst;
     long now = get_milis();
-    
-    long erliest_request = now + (1000*rTime);
+
+    long erliest_request = now + (rTime);
     for (uint32_t i = currently_read_segment_index + 1; i < max_segment_nr; i++) {
         if (b_buffer_segment_nr[i % buffer_segments] == -1) {
             if (retransmit_segment_nr[i % buffer_segments] != i) {
                 retransmit_segment_nr[i % buffer_segments] = i;
                 lst.push_back(i * pSize);
-                retransmit_time[i % buffer_segments] = now + (1000 * rTime);
+                retransmit_time[i % buffer_segments] = now + (rTime);
                 continue;
             }
 
             if (retransmit_time[i % buffer_segments] <= now) {
                 lst.push_back(i * pSize);
-                retransmit_time[i % buffer_segments] = now + (1000 * rTime);
+                retransmit_time[i % buffer_segments] = now + (rTime);
                 continue;
             }
             erliest_request = std::min(erliest_request, retransmit_time[i % buffer_segments]);
@@ -294,11 +357,93 @@ void* retransmit_requester_function(void* arg) {
     while (1) {
         while (erliest_request > get_milis())
         {
-            usleep((erliest_request - get_milis())/1000 );
+            //   std::cerr<< "(retransmit_requester) ++\n"; 
+            usleep((erliest_request - get_milis()) * 1000);
         }
+        // std::cerr<< "(retransmit_requester) " << get_milis()<<"\n";
+
         if (crr_station.port != 0) { // check if is station is online
-            do_retransmit_requester();
+            erliest_request = do_retransmit_requester();
         }
+        else {
+            erliest_request = get_milis() + rTime;
+        }
+    }
+}
+
+std::set<int> ui_clients_fs;
+pthread_mutex_t ui_mutex;
+void* handle_ui_connection(void* client_fd_ptr) {
+    int client_fd = *(int*)client_fd_ptr;
+    free(client_fd_ptr);
+
+    char input[1];
+    for (;;) {
+        ssize_t read = receive_message(client_fd, input, sizeof(input), 0);
+        if (read <= 0)
+            break;
+
+        if (input[0] != '\033') continue; // Escape character
+
+        read = receive_message(client_fd, input, sizeof(input), 0);
+        if (read <= 0)
+            break;
+        std::cerr << "(ui) 2 leter" << (int)input[0] << "\n";
+        if (input[0] != '[') continue;
+
+        read = receive_message(client_fd, input, sizeof(input), 0);
+        if (read <= 0)
+            break;
+
+        std::cerr << "(ui) secind leter" << (int)input[0] << "\n";
+        if (input[0] == 'A') { // Up arrow
+            std::cout << "Moving up" << std::endl;
+            continue;
+        }
+        if (input[0] == 'B') { // Down arrow
+            std::cout << "Moving down" << std::endl;
+            continue;
+        }
+    }
+
+
+    std::cerr << "(ui) cloasing " << client_fd << "\n";
+    close(client_fd);
+    return 0;
+}
+
+void* UI_accepter_function(void* arg) {
+    int socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket_fd < 0) {
+        PRINT_ERRNO();
+    }
+    bind_socket(socket_fd, ui_port);
+    CHECK_ERRNO(listen(socket_fd, 5));
+
+    std::cerr << ("Listening ui on port ") << ui_port << "\n";
+    pthread_mutex_init(&ui_mutex, NULL);
+
+    for (;;) {
+        struct sockaddr_in client_addr;
+
+        int client_fd = accept_connection(socket_fd, &client_addr);
+        if (client_fd < 0) continue;
+
+        std::cerr << "(ui) new " << client_fd << "\n";
+        // Arguments for the thread must be passed by pointer
+        int* client_fd_pointer = (int*)malloc(sizeof(int));
+        if (client_fd_pointer == NULL) {
+            fatal("malloc");
+        }
+        *client_fd_pointer = client_fd;
+
+        pthread_mutex_lock(&ui_mutex);
+        ui_clients_fs.insert(client_fd);
+        pthread_mutex_unlock(&ui_mutex);
+
+        pthread_t thread;
+        CHECK_ERRNO(pthread_create(&thread, 0, handle_ui_connection, client_fd_pointer));
+        CHECK_ERRNO(pthread_detach(thread));
     }
 }
 
@@ -359,6 +504,8 @@ int main(int argc, char* argv[]) {
     CHECK(pthread_create(&reply_listiner_thread, NULL, reply_listiner_function, NULL));
     pthread_t retransmit_requester_thread;
     CHECK(pthread_create(&retransmit_requester_thread, NULL, retransmit_requester_function, NULL));
+    pthread_t UI_thread;
+    CHECK(pthread_create(&UI_thread, NULL, UI_accepter_function, NULL));
 
 
     struct timeval tv; // timeout of 2s
@@ -415,7 +562,9 @@ int main(int argc, char* argv[]) {
         read_length = recive_package(socket_fd, &client_address, input_buffer, sizeof(input_buffer));
         // fprintf(stderr, "recived bytes %lu\n", read_length); // TOdelete
         if (read_length != sizeof(input_buffer)) {
-            fprintf(stderr, "recived unexpected amouth of bytes %lu\n", read_length);
+            if (read_length != 0) {
+                fprintf(stderr, "recived unexpected amouth of bytes %lu\n", read_length);
+            }
             continue;
         }
 
