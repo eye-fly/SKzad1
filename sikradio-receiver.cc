@@ -161,29 +161,6 @@ void u8tou64(uint8_t* const u8, uint64_t* u64) {
     *u64 = be64toh(*u64);
 }
 
-struct station {
-    std::string address;
-    uint16_t port;
-    std::string name;
-    sockaddr_in direct_address;
-};
-inline bool operator<(const station& lhs, const station& rhs)
-{
-    if (lhs.address == rhs.address) {
-        if (lhs.port == rhs.port) return lhs.name < rhs.name;
-        return lhs.port < rhs.port;
-    }
-    return lhs.address < rhs.address;
-}
-inline bool operator==(const station& lhs, const station& rhs)
-{
-    return (lhs.address == rhs.address && lhs.port == rhs.port && lhs.name == rhs.name);
-}
-inline bool operator!=(const station& lhs, const station& rhs)
-{
-    return !(lhs == rhs);
-}
-
 std::map<station, time_t> stations;
 pthread_mutex_t stations_mutex;
 station crr_station;
@@ -408,8 +385,36 @@ void* handle_ui_connection(void* client_fd_ptr) {
 
 
     std::cerr << "(ui) cloasing " << client_fd << "\n";
+    pthread_mutex_lock(&ui_mutex);
+    ui_clients_fs.erase(client_fd);
     close(client_fd);
+    pthread_mutex_unlock(&ui_mutex);
+
     return 0;
+}
+
+void* UI_updater_function(void* arg) {
+    std::vector<station> crr_stations;
+    station crr_choosen_station;
+    bool is_crr_choosen;
+
+    while (1) {
+         sleep(1);//TODO add sleep until update
+
+
+        pthread_mutex_lock(&stations_mutex);
+        for (std::pair<station, time_t> st : stations) crr_stations.push_back(st.first);
+        crr_choosen_station = choosen_station;
+        is_crr_choosen = is_station_choosen;
+        pthread_mutex_unlock(&stations_mutex);
+
+        pthread_mutex_lock(&ui_mutex);
+        for (int fd : ui_clients_fs) {
+            print_ui(crr_stations, is_crr_choosen, crr_choosen_station, fd);
+
+        }
+        pthread_mutex_unlock(&ui_mutex);
+    }
 }
 
 void* UI_accepter_function(void* arg) {
@@ -423,7 +428,10 @@ void* UI_accepter_function(void* arg) {
     std::cerr << ("Listening ui on port ") << ui_port << "\n";
     pthread_mutex_init(&ui_mutex, NULL);
 
-    for (;;) {
+    pthread_t thread;
+    CHECK_ERRNO(pthread_create(&thread, NULL, UI_updater_function, NULL));
+
+    while (1) {
         struct sockaddr_in client_addr;
 
         int client_fd = accept_connection(socket_fd, &client_addr);
@@ -441,7 +449,6 @@ void* UI_accepter_function(void* arg) {
         ui_clients_fs.insert(client_fd);
         pthread_mutex_unlock(&ui_mutex);
 
-        pthread_t thread;
         CHECK_ERRNO(pthread_create(&thread, 0, handle_ui_connection, client_fd_pointer));
         CHECK_ERRNO(pthread_detach(thread));
     }
