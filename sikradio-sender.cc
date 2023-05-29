@@ -23,9 +23,9 @@
 char* dest_addr = (char*)-1;
 uint16_t data_port = 20000 + (INDEX_NR % 10000);
 uint16_t ctrl_port = 30000 + (INDEX_NR % 10000);
-uint32_t pSize = 512;
-uint32_t fSize = 65536 * 2;
-uint32_t rTime = 250;
+long pSize = 512;
+long fSize = 65536 * 2;
+long rTime = 250;
 std::string sationName = "Nienazwany Nadajnik";
 
 bool read_parameters(int argc, char* argv[]) {
@@ -60,7 +60,7 @@ bool read_parameters(int argc, char* argv[]) {
                 }
             }
             else {
-                fatal("-P flag requires a data_port value.\n");
+                fatal("-P flag requires a ctrl_port value.\n");
             }
         }
         else if (strcmp(argv[i], "-p") == 0) {
@@ -82,7 +82,7 @@ bool read_parameters(int argc, char* argv[]) {
             i++;
             if (i < argc) {
                 fSize = read_number(argv[i]);
-                if (fSize < 0) {
+                if (fSize <= 0) {
                     fatal("fSize <= 0");
                 }
             }
@@ -197,7 +197,7 @@ void* control_function(void* arg) {
 
         read_length = recive_package(socket_fd, &client_address, buffer, buffer_size);
         if (read_length < 0) {
-            std::cout << "got read_length = " << read_length << " on control port\n";
+            // std::cout << "got read_length = " << read_length << " on control port\n";
             continue;
         }
 
@@ -235,25 +235,25 @@ void* control_function(void* arg) {
 
             // Check if the list has the correct format
             if (list.empty()) {
-                std::cout << "Invalid format: Empty list" << std::endl;
+                // std::cout << "Invalid format: Empty list" << std::endl;
                 continue;
             }
             else {
-                std::cout << "List:";
+                // std::cout << "List:";
                 pthread_mutex_lock(&set_mutex);
                 for (uint64_t number : list) {
                     if (number >= 0) {
                         in_set->insert(number / pSize);
                     }
-                    std::cout << " " << number/ pSize;
+                    // std::cout << " " << number/ pSize;
                 }
                 pthread_mutex_unlock(&set_mutex);
-                std::cout << std::endl;
+                // std::cout << std::endl;
             }
             continue;
         }
 
-        std::cout << "got unmached input on control: '" << input << "'\n";
+        // std::cout << "got unmached input on control: '" << input << "'\n";
     }
     CHECK_ERRNO(close(socket_fd));
     return NULL;
@@ -322,7 +322,6 @@ int main(int argc, char* argv[]) {
     uint8_t fifo_local[fifo_segments * pSize];
     fifo = fifo_local;
 
-    // data_send_address = get_send_address(dest_addr, data_port);
     mulitcast_socket_fd = bind_mulitcast_socket(data_port, dest_addr,&data_send_address);
     if (mulitcast_socket_fd < 0) {
         PRINT_ERRNO();
@@ -337,15 +336,11 @@ int main(int argc, char* argv[]) {
     CHECK(pthread_create(&resender_thread, NULL, resender_function, NULL));
 
 
-    // char* client_ip = inet_ntoa(send_address.sin_addr);
-    // uint16_t client_port = ntohs(send_address.sin_port);
-
-    // int erdf =0;
     while (1) {
 
         size_t bytes_read = fread(buffer + sizeof(first_byte_num) + sizeof(session_id), 1, pSize, stdin);
-        if (bytes_read != pSize) {
-            fprintf(stderr, "Error: first_byte_num=%lu could not read pSize=%u bytes from stdin. Last %ld won't be sent \n", first_byte_num, pSize, bytes_read);
+        if (bytes_read != (size_t)pSize) {
+            fprintf(stderr, "Error: first_byte_num=%lu could not read pSize=%lu bytes from stdin. Last %ld won't be sent \n", first_byte_num, pSize, bytes_read);
             break;
         }
         else {
@@ -355,30 +350,14 @@ int main(int argc, char* argv[]) {
             memcpy(&fifo[(fifo_last % fifo_segments) * pSize], buffer + sizeof(first_byte_num) + sizeof(session_id), pSize);
             if (fifo_first + fifo_segments == fifo_last) fifo_first++;
             pthread_mutex_unlock(&fifo_mutex);
-            // for(int i=0; pSize>i;i++){
-            //     printf("%c", fifo[(fifo_last%fifo_segments)*pSize+i]);
-            // }
-            // printf("\n");
 
 
             uint64_to_uint8(session_id, buffer);
             uint64_to_uint8(first_byte_num, buffer + sizeof(session_id));
 
-            // erdf ++;
-            // if(erdf% 1000 != 0 ){
-            if((first_byte_num/pSize) %4 == 0){
+            if((first_byte_num/pSize) %3 != 0){
                 send_message(mulitcast_socket_fd, &data_send_address, buffer, sizeof(buffer));
             }
-            // }
-            // printf("sent to %s:%u: \n", client_ip, client_port);
-            // printf("session_id of size %lu = ", sizeof(session_id));
-            // print_bytes(buffer, sizeof(session_id));
-
-            // printf("first_byte_num of size %lu = ", sizeof(first_byte_num));
-            // print_bytes(&buffer[sizeof(session_id)], sizeof(first_byte_num));
-
-            // printf("audio_data of size %u = ", pSize);
-            // print_bytes(&buffer[sizeof(session_id) + sizeof(first_byte_num)], pSize);
         }
         first_byte_num += pSize;
 
@@ -387,12 +366,12 @@ int main(int argc, char* argv[]) {
 
     }
 
-    CHECK_ERRNO(close(mulitcast_socket_fd));
     do_exit = true;
     pthread_join(control_thread, NULL);
     pthread_join(resender_thread, NULL);
     pthread_mutex_destroy(&fifo_mutex);
     pthread_mutex_destroy(&set_mutex);
+    CHECK_ERRNO(close(mulitcast_socket_fd));
 
     return 0;
 }

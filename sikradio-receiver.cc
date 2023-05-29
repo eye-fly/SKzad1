@@ -21,13 +21,12 @@
 #define INDEX_NR 438620
 
 std::string discovery_addr = "255.255.255.255";
-uint16_t data_port = 20000 + (INDEX_NR % 10000);
 uint16_t ctrl_port = 30000 + (INDEX_NR % 10000);
 uint16_t ui_port = 10000 + (INDEX_NR % 10000);
-uint32_t pSize = 512;
-uint32_t bSize = 65536;
+long pSize = 512;
+long bSize = 65536;
 
-uint32_t rTime = 250;
+long rTime = 250;
 
 std::string desired_station_name = "";
 
@@ -36,19 +35,7 @@ sem_t whait_for_buffer_fill;
 
 bool read_parameters(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-P") == 0) {
-            i++;
-            if (i < argc) {
-                data_port = read_port(argv[i]);
-                if (data_port <= 0) {
-                    fatal("%s is not valid port number", argv[i]);
-                }
-            }
-            else {
-                fatal("-P flag requires a data_port value.\n");
-            }
-        }
-        else if (strcmp(argv[i], "-C") == 0) {
+        if (strcmp(argv[i], "-C") == 0) {
             i++;
             if (i < argc) {
                 ctrl_port = read_port(argv[i]);
@@ -135,6 +122,13 @@ bool read_parameters(int argc, char* argv[]) {
             }
             else {
                 fatal("-n flag requires a name of station.\n");
+            }
+        }
+        else if (strcmp(argv[i], "-d") == 0) {
+            i++;
+            if (i < argc) {
+                discovery_addr = argv[i];
+                std::cerr << discovery_addr<<"\n";
             }
         }
     }
@@ -257,7 +251,7 @@ void* reply_listiner_function(void* arg) {
             pthread_mutex_lock(&stations_mutex);
             stations[stt] = time(NULL);
             if (!is_station_choosen) {
-                if (desired_station_name == "" || desired_station_name == stt.name) {
+                if ((desired_station_name == "" || desired_station_name == stt.name)) {
                     choosen_station = stt;
                     is_station_choosen = true;
                 }
@@ -322,7 +316,7 @@ long do_retransmit_requester() {
         }
         ss << "\n";
         std::string str = ss.str();
-        std::cerr << "(retransmit_requester) " << str;
+        // std::cerr << "(retransmit_requester) " << str;
 
         send_message(control_socket_fd, &crr_station.direct_address, reinterpret_cast<const uint8_t*>(str.c_str()), str.length());
     }
@@ -365,26 +359,64 @@ void* handle_ui_connection(void* client_fd_ptr) {
         read = receive_message(client_fd, input, sizeof(input), 0);
         if (read <= 0)
             break;
-        std::cerr << "(ui) 2 leter" << (int)input[0] << "\n";
         if (input[0] != '[') continue;
 
         read = receive_message(client_fd, input, sizeof(input), 0);
         if (read <= 0)
             break;
 
-        std::cerr << "(ui) secind leter" << (int)input[0] << "\n";
         if (input[0] == 'A') { // Up arrow
-            std::cout << "Moving up" << std::endl;
+            // std::cerr << "Moving up" << is_station_choosen << std::endl;
+
+            pthread_mutex_lock(&stations_mutex);
+            if (is_station_choosen) {
+                for (auto it = stations.begin()++; it != stations.end(); it++) {
+                    if (it->first == choosen_station) {
+                        it--;
+                        choosen_station = it->first;
+                        break;
+                    }
+                }
+
+            }
+            else {
+                if (stations.size() > 0) {
+                    is_station_choosen = true;
+                    choosen_station = stations.begin()->first;
+                }
+            }
+            pthread_mutex_unlock(&stations_mutex);
+
             continue;
         }
         if (input[0] == 'B') { // Down arrow
-            std::cout << "Moving down" << std::endl;
+            // std::cerr << "Moving down" << is_station_choosen << std::endl;
+
+            pthread_mutex_lock(&stations_mutex);
+            if (is_station_choosen) {
+                for (auto it = stations.begin(); it != stations.end(); it++) {
+                    if (it->first == choosen_station) {
+                        it++;
+                        if (it != stations.end())choosen_station = it->first;
+                        break;
+                    }
+                }
+
+            }
+            else {
+                if (stations.size() > 0) {
+                    is_station_choosen = true;
+                    choosen_station = stations.begin()->first;
+                }
+            }
+            pthread_mutex_unlock(&stations_mutex);
+
             continue;
         }
     }
 
 
-    std::cerr << "(ui) cloasing " << client_fd << "\n";
+    // std::cerr << "(ui) cloasing " << client_fd << "\n";
     pthread_mutex_lock(&ui_mutex);
     ui_clients_fs.erase(client_fd);
     close(client_fd);
@@ -399,10 +431,32 @@ void* UI_updater_function(void* arg) {
     bool is_crr_choosen;
 
     while (1) {
-         sleep(1);//TODO add sleep until update
+        sleep(1);//can't sleep until update because is also delate old stations
 
-
+        crr_stations.clear();
         pthread_mutex_lock(&stations_mutex);
+
+        for (std::pair<station, time_t> st : stations) {
+            if (time(NULL) > st.second + 20) {
+                std::cerr << "station inactive for more than 20s\n";
+                if (st.first == choosen_station) {
+                    is_station_choosen = false;
+
+                }
+
+                crr_stations.push_back(st.first);
+            }
+        }
+        for (station st : crr_stations) stations.erase(st);
+        //choose next station
+        for (std::pair<station, time_t> st2 : stations) {
+            if (!is_station_choosen && (desired_station_name == "" || desired_station_name == st2.first.name)) {
+                choosen_station = st2.first;
+                is_station_choosen = true;
+            }
+        }
+
+        crr_stations.clear();
         for (std::pair<station, time_t> st : stations) crr_stations.push_back(st.first);
         crr_choosen_station = choosen_station;
         is_crr_choosen = is_station_choosen;
@@ -437,7 +491,7 @@ void* UI_accepter_function(void* arg) {
         int client_fd = accept_connection(socket_fd, &client_addr);
         if (client_fd < 0) continue;
 
-        std::cerr << "(ui) new " << client_fd << "\n";
+        // std::cerr << "(ui) new " << client_fd << "\n";
         // Arguments for the thread must be passed by pointer
         int* client_fd_pointer = (int*)malloc(sizeof(int));
         if (client_fd_pointer == NULL) {
@@ -445,6 +499,7 @@ void* UI_accepter_function(void* arg) {
         }
         *client_fd_pointer = client_fd;
 
+        writen(client_fd, "\xFF\xFD\x22", 4);
         pthread_mutex_lock(&ui_mutex);
         ui_clients_fs.insert(client_fd);
         pthread_mutex_unlock(&ui_mutex);
@@ -529,8 +584,13 @@ int main(int argc, char* argv[]) {
 
         while (!is_station_choosen)
         {
-            std::cerr << "whaiting for station\n";
-            sleep(2);
+            //disconect from old
+            if (socket_fd != -1) lave_mulitcast_recive_socket(&socket_fd, ip_mreq);
+            crr_station.port = 0;
+
+            // std::cerr << "whaiting for station\n";
+            sleep(1);
+            continue;
         }
         if (choosen_station != crr_station) {
             crr_station = choosen_station;
@@ -553,24 +613,16 @@ int main(int argc, char* argv[]) {
             CHECK_ERRNO(setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*)&ip_mreq, sizeof ip_mreq));
 
             bind_socket(socket_fd, crr_station.port);
-            fprintf(stderr, "Starting to listen on port %u\n", data_port);
+            fprintf(stderr, "Starting to listen on port %u\n", crr_station.port);
 
         }
-        pthread_mutex_lock(&stations_mutex);
-        if (time(NULL) > stations[crr_station] + 20) {
-            std::cerr << "station inactive for more than 20s\n";
-            crr_station.port = 0;
-            is_station_choosen = false;
-            if (socket_fd != -1) lave_mulitcast_recive_socket(&socket_fd, ip_mreq);
-        }
-        pthread_mutex_unlock(&stations_mutex);
 
         memset(input_buffer, 0, sizeof(input_buffer));
         read_length = recive_package(socket_fd, &client_address, input_buffer, sizeof(input_buffer));
         // fprintf(stderr, "recived bytes %lu\n", read_length); // TOdelete
         if (read_length != sizeof(input_buffer)) {
             if (read_length != 0) {
-                fprintf(stderr, "recived unexpected amouth of bytes %lu\n", read_length);
+                // fprintf(stderr, "recived unexpected amouth of bytes %lu\n", read_length);
             }
             continue;
         }
@@ -608,10 +660,10 @@ int main(int argc, char* argv[]) {
             do_retransmit_requester();
 
             // fprintf(stderr, "writing to %u\n", current_segment_nr);
-            if (b_buffer_segment_nr[current_segment_nr % buffer_segments] != -1)
-            {
-                fprintf(stderr, "OVERWRITING: bolck nr %lu", b_buffer_segment_nr[current_segment_nr % buffer_segments]);
-            }
+            // if (b_buffer_segment_nr[current_segment_nr % buffer_segments] != -1)
+            // {
+            //     fprintf(stderr, "OVERWRITING: bolck nr %lu\n", b_buffer_segment_nr[current_segment_nr % buffer_segments]);
+            // }
             memcpy(&b_buffer[(current_segment_nr % buffer_segments) * pSize], &input_buffer[sizeof(session_id) + sizeof(first_byte_num)], pSize);
             b_buffer_segment_nr[current_segment_nr % buffer_segments] = current_segment_nr;
 

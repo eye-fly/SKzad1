@@ -137,6 +137,27 @@ inline static size_t receive_message(int socket_fd, void *buffer, size_t max_len
     return (size_t) received_length;
 }
 
+ssize_t
+writen(int fd, const char *b, size_t n)
+{
+    size_t left = n;
+
+    while (left)
+    {
+        ssize_t res = write(fd, b, left);
+        if (res == -1)
+        {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        if(res == 0 ) return -1;
+        left -= res;
+        b += res;
+    }
+    return n;
+}
+
 inline static int accept_connection(int socket_fd, struct sockaddr_in *client_address) {
     socklen_t client_address_length = (socklen_t) sizeof(*client_address);
 
@@ -202,6 +223,46 @@ long get_milis() {
     auto since_epoch = time.time_since_epoch(); // get the duration since epoch
     auto millis = sc::duration_cast<sc::milliseconds>(since_epoch);
     return millis.count();
+}
+
+
+struct station {
+    std::string address;
+    uint16_t port;
+    std::string name;
+    sockaddr_in direct_address;
+};
+inline bool operator<(const station& lhs, const station& rhs)
+{
+    if (lhs.address == rhs.address) {
+        if (lhs.port == rhs.port) return lhs.name < rhs.name;
+        return lhs.port < rhs.port;
+    }
+    return lhs.address < rhs.address;
+}
+inline bool operator==(const station& lhs, const station& rhs)
+{
+    return (lhs.address == rhs.address && lhs.port == rhs.port && lhs.name == rhs.name);
+}
+inline bool operator!=(const station& lhs, const station& rhs)
+{
+    return !(lhs == rhs);
+}
+
+std::string separator_line = "------------------------------------------------------------------------\n";
+std::string title_line = " SIK Radio\n";
+void print_ui(std::vector<station> stations, bool is_choosen, station choosen, int ui_fd){
+    std::stringstream ss;
+    ss <<'\033'<<'c'<< separator_line<< "\n" << title_line <<"\n"<<separator_line<< "\n";
+
+    for(station st : stations){
+        if(is_choosen && choosen == st) ss<<" > ";
+        ss<<st.name<<"\n"<<"\n";
+    }
+
+    ss<<separator_line;
+    std::string out = ss.str();
+    writen(ui_fd, reinterpret_cast<const char*>(out.c_str()), out.length());
 }
 
 void print_bytes(uint8_t* bytes, size_t num_bytes) {
